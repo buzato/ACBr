@@ -1,0 +1,56 @@
+name: Snapshot do SVN oficial do ACBr
+
+# Espelho próprio do ACBr usado pelo build do Wynix.
+# Não é git-svn: guarda só as pastas que o build da ACBrLibNFe usa, exportadas do SVN
+# oficial numa revisão fixa. Cada revisão vira um commit e a tag trunk2-r<revisão>.
+on:
+  workflow_dispatch:
+    inputs:
+      revisao:
+        description: "Revisão do trunk2 (ex.: 48295)"
+        required: true
+        default: "48295"
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SVN_URL: https://svn.code.sf.net/p/acbr/code/trunk2
+      REVISAO: ${{ inputs.revisao }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar subversion
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq subversion
+
+      - name: Exportar pastas do SVN oficial
+        run: |
+          set -eu
+          case "$REVISAO" in (*[!0-9]*|'') echo "revisão inválida"; exit 1;; esac
+          rm -rf Fontes Projetos Exemplos
+          for pasta in Fontes Projetos/ACBrLib/Fontes Exemplos/ACBrDFe/Schemas; do
+            mkdir -p "$(dirname "$pasta")"
+            ok=0
+            for tentativa in 1 2 3 4 5; do
+              rm -rf "$pasta"
+              if svn export --quiet --force --non-interactive "$SVN_URL/$pasta@$REVISAO" "$pasta"; then ok=1; break; fi
+              echo "falha em $pasta (tentativa $tentativa/5)"; sleep $((tentativa * 10))
+            done
+            test "$ok" = 1
+          done
+          printf 'trunk2@%s\n' "$REVISAO" > REVISAO-SVN.txt
+
+      - name: Commitar e etiquetar
+        run: |
+          set -eu
+          git config user.name "acbr-snapshot"
+          git config user.email "acbr-snapshot@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "sem mudanças" || git commit -q -m "ACBr trunk2@${REVISAO} (SVN oficial)"
+          git tag -f "trunk2-r${REVISAO}"
+          git push origin HEAD:main
+          git push -f origin "trunk2-r${REVISAO}"
